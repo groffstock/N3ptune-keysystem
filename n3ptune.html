@@ -108,7 +108,7 @@ body{
 .page.active{display:flex}
 
 /* ── HOME PAGE ── */
-.home-page{overflow-y:auto;-webkit-overflow-scrolling:touch}
+.home-page{overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y}
 .home-sections{padding:0 28px 60px}
 .home-hero{
   padding:52px 40px 36px;
@@ -322,7 +322,7 @@ body{
 /* ── GAMES PAGE ── */
 .games-page{overflow:hidden}
 .games-topbar{flex-shrink:0}
-.games-content{padding:16px 22px 48px;flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:0}
+.games-content{padding:16px 22px 48px;flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:0;touch-action:pan-y}
 
 /* ── SETTINGS PAGE ── */
 .settings-page{
@@ -571,6 +571,8 @@ body{
   background-size:44px 44px;
   display:flex;align-items:center;justify-content:center;
   font-family:'Syne',sans-serif;
+  overscroll-behavior:contain;
+  touch-action:pan-y;
 ">
   <!-- radial glow -->
   <div style="position:absolute;inset:0;background:radial-gradient(ellipse 70% 60% at 50% 50%,rgba(37,99,235,0.12) 0%,transparent 70%);pointer-events:none"></div>
@@ -659,6 +661,11 @@ body{
   if(sessionStorage.getItem('n3_unlocked') === '1'){
     document.getElementById('keyGate').style.display = 'none';
   }
+
+  // Fix: prevent overlay blocking touch scroll after unlock
+  document.getElementById('keyGate').addEventListener('touchmove', function(e){
+    if(e.target === this) e.preventDefault();
+  }, { passive: false });
 
   // ── Silent jsDelivr cache purge on load ──
   (async function purgeCache(){
