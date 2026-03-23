@@ -108,7 +108,7 @@ body{
 .page.active{display:flex}
 
 /* ── HOME PAGE ── */
-.home-page{overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y}
+.home-page{overflow-y:scroll;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain}
 .home-sections{padding:0 28px 60px}
 .home-hero{
   padding:52px 40px 36px;
@@ -322,7 +322,7 @@ body{
 /* ── GAMES PAGE ── */
 .games-page{overflow:hidden}
 .games-topbar{flex-shrink:0}
-.games-content{padding:16px 22px 48px;flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:0;touch-action:pan-y}
+.games-content{padding:16px 22px 48px;flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;min-height:0;touch-action:pan-y;overscroll-behavior:contain}
 
 /* ── SETTINGS PAGE ── */
 .settings-page{
@@ -3085,6 +3085,30 @@ document.addEventListener('DOMContentLoaded', ()=>{
 
 
 loadAll().then(() => { loadPlayedFromStorage(); initHeroCanvas(); loadTheme(); loadWallpaper(); loadCloak(); });
+
+// u2500u2500 Mobile touch drag scroll u2500u2500
+(function(){
+  function enableTouchScroll(el) {
+    if (!el) return;
+    let startY = 0, startScrollTop = 0, isDragging = false;
+    el.addEventListener("touchstart", e => {
+      isDragging = true;
+      startY = e.touches[0].clientY;
+      startScrollTop = el.scrollTop;
+    }, { passive: true });
+    el.addEventListener("touchmove", e => {
+      if (!isDragging) return;
+      const dy = startY - e.touches[0].clientY;
+      el.scrollTop = startScrollTop + dy;
+    }, { passive: true });
+    el.addEventListener("touchend", () => { isDragging = false; }, { passive: true });
+  }
+  document.addEventListener("DOMContentLoaded", () => {
+    enableTouchScroll(document.getElementById("games-content"));
+    enableTouchScroll(document.querySelector(".home-page"));
+    enableTouchScroll(document.querySelector(".settings-page"));
+  });
+})();
 
 // ═══════════════════════════════════════════════════════════
 //  SETTINGS
