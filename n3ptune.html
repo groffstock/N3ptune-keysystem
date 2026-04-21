@@ -108,7 +108,7 @@ body{
 .page.active{display:flex}
 
 /* ── HOME PAGE ── */
-.home-page{overflow-y:scroll;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain}
+.home-page{overflow-y:scroll;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain;height:100%}
 .home-sections{padding:0 28px 60px}
 .home-hero{
   padding:52px 40px 36px;
@@ -326,7 +326,7 @@ body{
 
 /* ── SETTINGS PAGE ── */
 .settings-page{
-  padding:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  padding:0;overflow-y:scroll;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain;
   align-items:stretch;
 }
 .settings-wrap{max-width:640px;margin:0 auto;padding:36px 28px 60px;width:100%}
@@ -484,8 +484,7 @@ body{
 }
 .ptip-x:hover{color:var(--text)}
 @media(max-width:700px){.ptip{display:none}}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:#0d2040;border-radius:3px}
+
 
 @media(max-width:600px){
   :root{--sidebar-w:0px}
@@ -815,14 +814,14 @@ body{
     <div class="topbar-right">
       <button class="save-btn" onclick="saveData()" title="Save progress"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V7l-4-4zm2 16H5V5h11.17L19 7.83V19zm-7-7a3 3 0 100 6 3 3 0 000-6zm-5-5h8v4H7V7z"/></svg> Save</button>
       <button class="save-btn load-btn" onclick="loadData()" title="Load save"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zm-8 2V5h2v6h1.17L12 13.17 9.83 11H11zm-6 8h14v2H5v-2z"/></svg> Load</button>
-      <select class="tsort" id="sortSelect">
+      <select class="tsort" id="sortSelect" style="display:none">
         <option value="default">Default</option>
         <option value="name">Name A–Z</option>
-      <option value="popular">Most Played</option>
-      <option value="trendingMonth">Trending Month</option>
-      <option value="trendingWeek">Trending Week</option>
-      <option value="trendingDay">Trending Day</option>
-              </select>
+        <option value="popular">Most Played</option>
+        <option value="trendingMonth">Trending Month</option>
+        <option value="trendingWeek">Trending Week</option>
+        <option value="trendingDay">Trending Day</option>
+      </select>
     </div>
   </div>
 
@@ -999,12 +998,13 @@ const _IC_GAMEPAD = '<svg width="24" height="24" viewBox="0 0 24 24" fill="curre
 const _IC_PLAY    = '<svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>';
 
 
-const GN_COVER = "https://cdn.jsdelivr.net/gh/%67%6e%2d%6d%61%74%68/covers@main";
-const GN_HTML  = "https://cdn.jsdelivr.net/gh/%67%6e%2d%6d%61%74%68/html@main";
+const GN_COVER = "https://cdn.jsdelivr.net/gh/freebuisness/covers@main";
+const GN_HTML  = "https://cdn.jsdelivr.net/gh/freebuisness/html@main";
 const GN_ZONES = [
-  "https://cdn.jsdelivr.net/gh/%67%6e%2d%6d%61%74%68/assets@main/zones.json",
-  "https://cdn.jsdelivr.net/gh/%67%6e%2d%6d%61%74%68/assets@latest/zones.json",
-  "https://cdn.jsdelivr.net/gh/%67%6e%2d%6d%61%74%68/assets/zones.json",
+  "https://cdn.jsdelivr.net/gh/freebuisness/assets@main/zones.json",
+  "https://cdn.jsdelivr.net/gh/freebuisness/assets@latest/zones.json",
+  "https://cdn.jsdelivr.net/gh/freebuisness/assets@master/zones.json",
+  "https://cdn.jsdelivr.net/gh/freebuisness/assets/zones.json",
 ];
 
 let gnZones = [], ugsGames = [], seraphGames = [];
@@ -1028,22 +1028,46 @@ async function loadAll() {
 }
 
 async function loadGN() {
-  for (const u of GN_ZONES) {
+  // Try to get the latest SHA from GitHub API for freshest zones.json
+  let zonesURL = GN_ZONES[Math.floor(Math.random() * GN_ZONES.length)];
+  try {
+    let shaResponse = await fetch("https://api.github.com/repos/freebuisness/assets/commits?t=" + Date.now());
+    if (shaResponse && shaResponse.status === 200) {
+      try {
+        const shaJson = await shaResponse.json();
+        const sha = shaJson[0]['sha'];
+        if (sha) zonesURL = `https://cdn.jsdelivr.net/gh/freebuisness/assets@${sha}/zones.json`;
+      } catch(e) {
+        try {
+          const fallbackSha = await fetch("https://raw.githubusercontent.com/freebuisness/xml/refs/heads/main/sha.txt?t=" + Date.now());
+          if (fallbackSha && fallbackSha.status === 200) {
+            const sha = (await fallbackSha.text()).trim();
+            if (sha) zonesURL = `https://cdn.jsdelivr.net/gh/freebuisness/assets@${sha}/zones.json`;
+          }
+        } catch(e2) {}
+      }
+    }
+  } catch(e) {}
+
+  // Fetch zones.json, fall back through static URLs if needed
+  let fetched = false;
+  const urlsToTry = [zonesURL, ...GN_ZONES.filter(u => u !== zonesURL)];
+  for (const u of urlsToTry) {
     try {
-      const r = await fetch(u);
+      const r = await fetch(u + (u.includes('?') ? '&' : '?') + 't=' + Date.now());
       if (r.ok) {
         const data = await r.json();
-        // zones.json may be an array directly, or wrapped in an object
         gnZones = Array.isArray(data) ? data : (data.zones || data.games || Object.values(data)[0] || []);
-        if (gnZones.length) break;
+        if (gnZones.length) { fetched = true; break; }
       }
     } catch(e) { console.warn('[N3ptune] GN-Math fetch failed:', u, e.message); }
   }
-  if (!gnZones.length) console.warn('[N3ptune] GN-Math: all URLs failed, gnZones is empty');
+  if (!fetched) console.warn('[N3ptune] GN-Math: all URLs failed, gnZones is empty');
+
   // Load popularity stats (non-blocking)
   ['year','month','week','day'].forEach(async p => {
     try {
-      const d = await fetch(`https://data.jsdelivr.com/v1/stats/packages/gh/%67%6e%2d%6d%61%74%68/html@main/files?period=${p}`).then(r => r.json());
+      const d = await fetch(`https://data.jsdelivr.com/v1/stats/packages/gh/freebuisness/html@main/files?period=${p}`).then(r => r.json());
       gnPop[p] = {};
       d.forEach(f => { const m = f.name.match(/\/(\d+)\.html$/); if(m) gnPop[p][+m[1]] = f.hits?.total ?? 0; });
     } catch(e) { gnPop[p] = {}; }
@@ -2578,13 +2602,20 @@ function loadSeraph() {
 function getUnified() {
   let list = [];
   if (activeSrcs.has('gn'))
-    list.push(...gnZones.map(z=>({
-      _src:'gn', _key:'gn_'+z.id, _id:z.id,
-      name:z.name,
-      cover:z.cover?.replace('{COVER_URL}',GN_COVER).replace('{HTML_URL}',GN_HTML)??null,
-      url:  z.url?.replace('{COVER_URL}',GN_COVER).replace('{HTML_URL}',GN_HTML)??null,
-      tags: z.special||[], featured:!!z.featured,
-    })));
+    list.push(...gnZones.map(z=>{
+      // Build the cover URL from the template or fall back to id-based path
+      let cover = z.cover?.replace('{COVER_URL}',GN_COVER).replace('{HTML_URL}',GN_HTML)??null;
+      if (cover === GN_COVER || cover === GN_HTML) cover = GN_COVER+'/'+z.id+'.avif';
+      // Build the game URL: if zone.url is just the base placeholder or missing, use id-based path
+      let url = z.url?.replace('{COVER_URL}',GN_COVER).replace('{HTML_URL}',GN_HTML)??null;
+      if (!url || url === GN_HTML || url === GN_COVER || url === GN_HTML+'/' || url === GN_HTML+'/undefined.html')
+        url = GN_HTML+'/'+z.id+'.html';
+      return {
+        _src:'gn', _key:'gn_'+z.id, _id:z.id,
+        name:z.name, cover, url,
+        tags: z.special||[], featured:!!z.featured,
+      };
+    }));
   if (activeSrcs.has('ugs'))
     list.push(...ugsGames);
   if (activeSrcs.has('seraph'))
@@ -2890,7 +2921,7 @@ async function launch(key) {
     }catch(e){ w.location.href=g.url; }
   };
 
-  // External non-jsDelivr URLs: open in new tab
+  // Non-jsdelivr external URLs: open in new tab
   if(g.url.startsWith('http')&&!g.url.includes('jsdelivr')){
     window.open(g.url,'_blank'); closeGame(); return;
   }
@@ -2952,7 +2983,7 @@ function loadPlayedFromStorage() {
 
 function renderSavedList() {
   const el = document.getElementById('savedList');
-  if (!el) return;
+  if (!el) return; // element not present in this layout, that's fine
   const unified = getUnified();
   const played = unified.filter(g => playedGames.has(g._key));
   if (!played.length) {
@@ -2966,6 +2997,21 @@ function renderSavedList() {
       <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(g.name)}</span>
     </div>`;
   }).join('');
+}
+
+function showN3Toast(msg, ok=true) {
+  let t = document.getElementById('n3_toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'n3_toast';
+    t.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:99999;background:rgba(7,17,32,0.97);border:1px solid rgba(96,165,250,0.22);border-radius:10px;padding:11px 18px;font-family:\'Syne\',sans-serif;font-size:12px;font-weight:700;letter-spacing:.03em;box-shadow:0 8px 32px rgba(0,0,0,.5);opacity:0;transition:opacity .25s;pointer-events:none;max-width:280px;line-height:1.5;';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.color = ok ? '#4ade80' : '#f87171';
+  t.style.opacity = '1';
+  clearTimeout(t._tid);
+  t._tid = setTimeout(() => { t.style.opacity = '0'; }, 3000);
 }
 
 function saveData() {
@@ -2995,6 +3041,7 @@ function saveData() {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   renderSavedList();
+  showN3Toast('✅ Save downloaded! (' + played.length + ' game' + (played.length===1?'':'s') + ')');
 }
 
 function loadData() {
@@ -3026,8 +3073,8 @@ function loadData() {
           }
         }
         renderSavedList();
-        alert('Save loaded! Games and settings restored.');
-      } catch(err) { alert('Invalid .n3pt file.'); }
+        showN3Toast('✅ Save loaded! ' + keys.length + ' game' + (keys.length===1?'':'s') + ' restored.');
+      } catch(err) { showN3Toast('❌ Invalid .n3pt file.', false); }
     };
     reader.readAsText(file);
   };
@@ -3088,26 +3135,7 @@ loadAll().then(() => { loadPlayedFromStorage(); initHeroCanvas(); loadTheme(); l
 
 // u2500u2500 Mobile touch drag scroll u2500u2500
 (function(){
-  function enableTouchScroll(el) {
-    if (!el) return;
-    let startY = 0, startScrollTop = 0, isDragging = false;
-    el.addEventListener("touchstart", e => {
-      isDragging = true;
-      startY = e.touches[0].clientY;
-      startScrollTop = el.scrollTop;
-    }, { passive: true });
-    el.addEventListener("touchmove", e => {
-      if (!isDragging) return;
-      const dy = startY - e.touches[0].clientY;
-      el.scrollTop = startScrollTop + dy;
-    }, { passive: true });
-    el.addEventListener("touchend", () => { isDragging = false; }, { passive: true });
-  }
-  document.addEventListener("DOMContentLoaded", () => {
-    enableTouchScroll(document.getElementById("games-content"));
-    enableTouchScroll(document.querySelector(".home-page"));
-    enableTouchScroll(document.querySelector(".settings-page"));
-  });
+
 })();
 
 // ═══════════════════════════════════════════════════════════
