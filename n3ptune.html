@@ -3097,14 +3097,13 @@ function saveData() {
       }
     };
     try { localStorage.setItem(SAVE_KEY, JSON.stringify([...playedGames])); } catch(e) {}
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {type: 'application/json'});
+    const json = JSON.stringify(payload, null, 2);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
+    a.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(json);
     a.download = 'n3ptune-save-' + new Date().toISOString().slice(0,10) + '.n3pt';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     renderSavedList();
     showN3Toast('✅ Saved! (' + played.length + ' game' + (played.length===1?'':'s') + ')');
   } catch(err) {
