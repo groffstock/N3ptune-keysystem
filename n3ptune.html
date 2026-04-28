@@ -85,6 +85,7 @@ body{
   display:flex;align-items:center;gap:10px;padding:0 20px;height:52px;
   background:rgba(5,13,26,0.85);backdrop-filter:blur(12px);
   border-bottom:1px solid var(--border);flex-shrink:0;
+  position:relative;z-index:50;
 }
 .page-title{font-size:14px;font-weight:700;color:var(--text);letter-spacing:-.02em}
 .topbar-right{margin-left:auto;display:flex;gap:7px;align-items:center}
@@ -3015,51 +3016,56 @@ function showN3Toast(msg, ok=true) {
 }
 
 function saveData() {
-  const unified = getUnified();
-  const played = unified.filter(g => playedGames.has(g._key));
-  const payload = {
-    version: 2,
-    savedAt: new Date().toISOString(),
-    site: 'N3ptune',
-    games: played.map(g => ({
-      key: g._key, name: g.name, src: g._src, url: g.url, cover: g.cover || null,
-    })),
-    settings: {
-      theme: localStorage.getItem('n3_theme') || 'default',
-      wallpaper: localStorage.getItem('n3_wallpaper') || null,
-      cloakTitle: localStorage.getItem('n3_cloak_title') || null,
-      cloakIcon: localStorage.getItem('n3_cloak_icon') || null,
-    }
-  };
-  // Save to localStorage
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify([...playedGames])); } catch(e) {}
-  // Also download .n3pt file
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {type: 'application/json'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'n3ptune-save-' + new Date().toISOString().slice(0,10) + '.n3pt';
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  renderSavedList();
-  showN3Toast('✅ Save downloaded! (' + played.length + ' game' + (played.length===1?'':'s') + ')');
+  try {
+    const unified = getUnified();
+    const played = unified.filter(g => playedGames.has(g._key));
+    const payload = {
+      version: 2,
+      savedAt: new Date().toISOString(),
+      site: 'N3ptune',
+      games: played.map(g => ({
+        key: g._key, name: g.name, src: g._src, url: g.url, cover: g.cover || null,
+      })),
+      settings: {
+        theme: localStorage.getItem('n3_theme') || 'default',
+        wallpaper: localStorage.getItem('n3_wallpaper') || null,
+        cloakTitle: localStorage.getItem('n3_cloak_title') || null,
+        cloakIcon: localStorage.getItem('n3_cloak_icon') || null,
+      }
+    };
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify([...playedGames])); } catch(e) {}
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {type: 'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'n3ptune-save-' + new Date().toISOString().slice(0,10) + '.n3pt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    renderSavedList();
+    showN3Toast('✅ Saved! (' + played.length + ' game' + (played.length===1?'':'s') + ')');
+  } catch(err) {
+    showN3Toast('❌ Save failed: ' + err.message, false);
+  }
 }
 
 function loadData() {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.n3pt';
-  input.onchange = e => {
-    const file = e.target.files[0];
+  input.accept = '.n3pt,.json';
+  input.style.display = 'none';
+  document.body.appendChild(input);
+  input.addEventListener('change', function() {
+    const file = input.files[0];
+    document.body.removeChild(input);
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => {
+    reader.onload = function(ev) {
       try {
         const payload = JSON.parse(ev.target.result);
-        // Restore played games
         const keys = (payload.games || []).map(g => g.key);
         keys.forEach(k => playedGames.add(k));
         persistPlayed();
-        // Restore settings if present
         if (payload.settings) {
           const s = payload.settings;
           if (s.theme) { localStorage.setItem('n3_theme', s.theme); applyTheme(s.theme); }
@@ -3068,16 +3074,18 @@ function loadData() {
           if (s.cloakIcon) {
             localStorage.setItem('n3_cloak_icon', s.cloakIcon);
             let link = document.querySelector("link[rel*='icon']");
-            if (!link) { link = document.createElement('link'); link.rel='icon'; document.head.appendChild(link); }
+            if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); }
             link.href = s.cloakIcon;
           }
         }
         renderSavedList();
-        showN3Toast('✅ Save loaded! ' + keys.length + ' game' + (keys.length===1?'':'s') + ' restored.');
-      } catch(err) { showN3Toast('❌ Invalid .n3pt file.', false); }
+        showN3Toast('✅ Loaded! ' + keys.length + ' game' + (keys.length===1?'':'s') + ' restored.');
+      } catch(err) {
+        showN3Toast('❌ Invalid save file.', false);
+      }
     };
     reader.readAsText(file);
-  };
+  });
   input.click();
 }
 
