@@ -706,10 +706,15 @@ body{
 
   async function fetchGitHubKeys() {
     try {
-      const url = `https://cdn.jsdelivr.net/gh/${REPO}@main/keys.json?t=${Date.now()}`;
-      const res = await fetch(url);
-      if(!res.ok) return null; // null = fetch failed, don't log out
-      return await res.json();
+      const mirrors = ['cdn.jsdelivr.net','quantil.jsdelivr.net','fastly.jsdelivr.net','gcore.jsdelivr.net','testingcf.jsdelivr.net'];
+      for (const mirror of mirrors) {
+        try {
+          const url = `https://${mirror}/gh/${REPO}@main/keys.json?t=${Date.now()}`;
+          const res = await fetch(url);
+          if (res.ok) return await res.json();
+        } catch(e) {}
+      }
+      return null; // all mirrors failed, don't log out
     } catch(e) { return null; }
   }
 
@@ -1058,12 +1063,76 @@ body{
 </div>
 
 <script>
+// ═══════════════════════════════════════════════════════════
+//  CDN MIRROR RESOLVER
+//  Tries cdn.jsdelivr.net first, falls back to mirrors if blocked.
+//  All code uses cdn.jsdelivr.net — this patches it transparently.
+// ═══════════════════════════════════════════════════════════
+const CDN_MIRRORS = [
+  'cdn.jsdelivr.net',
+  'quantil.jsdelivr.net',
+  'fastly.jsdelivr.net',
+  'gcore.jsdelivr.net',
+  'testingcf.jsdelivr.net',
+];
+let _cdnHost = CDN_MIRRORS[0]; // start with default
+let _cdnResolved = false;
+let _cdnResolving = null;
+
+function cdnUrl(url) {
+  if (!url || !url.includes('cdn.jsdelivr.net')) return url;
+  return url.replace('cdn.jsdelivr.net', _cdnHost);
+}
+
+async function resolveCdn() {
+  if (_cdnResolved) return _cdnHost;
+  if (_cdnResolving) return _cdnResolving;
+  _cdnResolving = (async () => {
+    for (const mirror of CDN_MIRRORS) {
+      try {
+        const testUrl = `https://${mirror}/gh/freebuisness/assets@main/zones.json`;
+        const r = await fetch(testUrl, { method: 'HEAD', cache: 'no-store', signal: AbortSignal.timeout(4000) });
+        if (r.ok || r.status === 304) {
+          _cdnHost = mirror;
+          _cdnResolved = true;
+          console.log('[N3ptune] CDN mirror:', mirror);
+          return mirror;
+        }
+      } catch(e) {
+        console.warn('[N3ptune] CDN mirror failed:', mirror);
+      }
+    }
+    _cdnResolved = true;
+    return _cdnHost;
+  })();
+  return _cdnResolving;
+}
+
+// Patch global fetch to transparently swap cdn.jsdelivr.net with the working mirror
+const _origFetch = window.fetch.bind(window);
+window.fetch = function(input, init) {
+  if (typeof input === 'string' && input.includes('cdn.jsdelivr.net')) {
+    input = cdnUrl(input);
+  } else if (input instanceof Request && input.url.includes('cdn.jsdelivr.net')) {
+    input = new Request(cdnUrl(input.url), input);
+  }
+  return _origFetch(input, init);
+};
+
+// Start resolving immediately in background
+resolveCdn();
+
 const _IC_GAMEPAD = '<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="opacity:.2"><path d="M21 6H3a1 1 0 00-1 1v10a1 1 0 001 1h18a1 1 0 001-1V7a1 1 0 00-1-1zm-11 8H8v2H6v-2H4v-2h2v-2h2v2h2v2zm4-1a1 1 0 110-2 1 1 0 010 2zm3 2a1 1 0 110-2 1 1 0 010 2z"/></svg>';
 const _IC_PLAY    = '<svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>';
 
 
-const GN_COVER = "https://cdn.jsdelivr.net/gh/freebuisness/covers@main";
-const GN_HTML  = "https://cdn.jsdelivr.net/gh/freebuisness/html@main";
+let GN_COVER = "https://cdn.jsdelivr.net/gh/freebuisness/covers@main";
+let GN_HTML  = "https://cdn.jsdelivr.net/gh/freebuisness/html@main";
+// Update GN_COVER/GN_HTML once the CDN mirror is resolved
+resolveCdn().then(mirror => {
+  GN_COVER = `https://${mirror}/gh/freebuisness/covers@main`;
+  GN_HTML  = `https://${mirror}/gh/freebuisness/html@main`;
+});
 const GN_ZONES = [
   "https://cdn.jsdelivr.net/gh/freebuisness/assets@main/zones.json",
   "https://cdn.jsdelivr.net/gh/freebuisness/assets@latest/zones.json",
@@ -1100,13 +1169,13 @@ async function loadGN() {
       try {
         const shaJson = await shaResponse.json();
         const sha = shaJson[0]['sha'];
-        if (sha) zonesURL = `https://cdn.jsdelivr.net/gh/freebuisness/assets@${sha}/zones.json`;
+        if (sha) zonesURL = `https://${_cdnHost}/gh/freebuisness/assets@${sha}/zones.json`;
       } catch(e) {
         try {
           const fallbackSha = await fetch("https://raw.githubusercontent.com/freebuisness/xml/refs/heads/main/sha.txt?t=" + Date.now());
           if (fallbackSha && fallbackSha.status === 200) {
             const sha = (await fallbackSha.text()).trim();
-            if (sha) zonesURL = `https://cdn.jsdelivr.net/gh/freebuisness/assets@${sha}/zones.json`;
+            if (sha) zonesURL = `https://${_cdnHost}/gh/freebuisness/assets@${sha}/zones.json`;
           }
         } catch(e2) {}
       }
@@ -3389,9 +3458,6 @@ function loadWallpaperPreview() {
 
 // ═══════════════════════════════════════════════════════════
 //  N3PT PANIC
-//  Most sites block iframes (X-Frame-Options / CSP), so we
-//  use a real popup window instead — positioned/sized to fill
-//  the screen so it looks like an overlay.
 // ═══════════════════════════════════════════════════════════
 (function(){
   const PANIC_KEY = 'n3_panic';
@@ -3422,27 +3488,53 @@ function loadWallpaperPreview() {
     return combo && comboToString(e) === combo;
   }
 
-  function openPanicWindow(url) {
-    const w = screen.availWidth, h = screen.availHeight;
-    const features = `width=${w},height=${h},left=0,top=0,menubar=no,toolbar=no,location=no,status=no,scrollbars=yes`;
+  // Preload: open a tiny 1x1 off-screen window so the page loads in the background
+  function preloadPanic(url) {
+    if (panicWindow && !panicWindow.closed) panicWindow.close();
+    const features = 'width=1,height=1,left=-9999,top=-9999,menubar=no,toolbar=no,location=no,status=no';
     panicWindow = window.open(url, 'n3ptpanic', features);
-    if (panicWindow) {
+    panicVisible = false;
+  }
+
+  // Show: resize the preloaded window to fullscreen and focus it
+  function showPanic() {
+    if (!panicWindow || panicWindow.closed) {
+      const cfg = getPanicConfig();
+      if (cfg.url) preloadPanic(cfg.url);
+      return;
+    }
+    try {
+      panicWindow.moveTo(0, 0);
+      panicWindow.resizeTo(screen.availWidth, screen.availHeight);
       panicWindow.focus();
       panicVisible = true;
-    }
+    } catch(e) {}
+  }
+
+  // Hide: shrink back to 1x1 off-screen and refocus N3ptune
+  function hidePanic() {
+    if (!panicWindow || panicWindow.closed) return;
+    try {
+      panicWindow.resizeTo(1, 1);
+      panicWindow.moveTo(-9999, -9999);
+      panicWindow.blur();
+      window.focus();
+      panicVisible = false;
+    } catch(e) {}
   }
 
   function togglePanic() {
     const cfg = getPanicConfig();
     if (!cfg.url) return;
-    // If window is gone or closed, open fresh
-    if (!panicVisible || !panicWindow || panicWindow.closed) {
-      openPanicWindow(cfg.url);
+    if (!panicWindow || panicWindow.closed) {
+      // Window was closed externally — reopen and show immediately
+      const features = `width=${screen.availWidth},height=${screen.availHeight},left=0,top=0,menubar=no,toolbar=no,location=no,status=no,scrollbars=yes`;
+      panicWindow = window.open(cfg.url, 'n3ptpanic', features);
+      panicVisible = true;
+    } else if (!panicVisible) {
+      showPanic();
     } else {
-      // Hide: blur it and bring N3ptune back to focus
-      panicWindow.blur();
-      window.focus();
-      panicVisible = false;
+      hidePanic();
     }
   }
 
@@ -3489,13 +3581,11 @@ function loadWallpaperPreview() {
     const cfg = getPanicConfig();
     cfg.url = raw.startsWith('http') ? raw : 'https://' + raw;
     setPanicConfig(cfg);
-    // Close any existing panic window so next toggle opens the new URL
-    if (panicWindow && !panicWindow.closed) panicWindow.close();
-    panicWindow = null;
-    panicVisible = false;
+    // Preload immediately in background
+    preloadPanic(cfg.url);
     const status = document.getElementById('panicStatus');
     if (status) {
-      status.textContent = '✅ Saved! Press your panic key to test.';
+      status.textContent = '✅ Saved! Loading in background...';
       setTimeout(() => { status.textContent = ''; }, 3000);
     }
   };
