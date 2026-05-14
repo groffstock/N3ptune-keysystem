@@ -707,10 +707,13 @@ body{
 
   async function fetchGitHubKeys() {
     try {
-      const mirrors = ['cdn.jsdelivr.net','fastly.jsdelivr.net','gcore.jsdelivr.net','quantil.jsdelivr.net','testingcf.jsdelivr.net'];
+      const mirrors = ['cdn.jsdelivr.net','fastly.jsdelivr.net','gcore.jsdelivr.net','quantil.jsdelivr.net','testingcf.jsdelivr.net','cdn.statically.io'];
       for (const m of mirrors) {
         try {
-          const r = await _keyFetch(`https://${m}/gh/${REPO}@main/keys.json?t=${Date.now()}`, { signal: AbortSignal.timeout(5000) });
+          const base = m === 'cdn.statically.io'
+            ? `https://cdn.statically.io/gh/${REPO}@main/keys.json`
+            : `https://${m}/gh/${REPO}@main/keys.json`;
+          const r = await _keyFetch(base + '?t=' + Date.now(), { signal: AbortSignal.timeout(5000) });
           if (r.ok) return await r.json();
         } catch(e) {}
       }
@@ -1077,6 +1080,7 @@ const CDN_MIRRORS = [
   'quantil.jsdelivr.net',
   'testingcf.jsdelivr.net',
 ];
+const CDN_MIRRORS_ALL = [...CDN_MIRRORS, 'cdn.statically.io'];
 const CDN_TEST_PATH = '/gh/freebuisness/assets@main/zones.json';
 const ALL_CDN_HOSTS = /(\/\/)([a-z]+\.jsdelivr\.net)/g;
 
@@ -1086,19 +1090,37 @@ let _cdnResolving = null;
 
 function cdnUrl(url) {
   if (!url) return url;
-  // Replace any jsdelivr mirror host with the fastest one
-  return url.replace(ALL_CDN_HOSTS, (_, slashes, host) => slashes + _cdnHost);
+  return _swapMirror(url, _cdnHost);
 }
 
 function patchHtml(html) {
-  // Replace all jsdelivr hosts in game HTML before rendering
-  return html.replace(ALL_CDN_HOSTS, (_, slashes, host) => slashes + _cdnHost);
+  // Replace all CDN hosts (jsdelivr or statically) in game HTML with the fastest
+  return _swapMirror(html, _cdnHost);
+}
+
+function _mirrorTestUrl(mirror) {
+  if (mirror === 'cdn.statically.io')
+    return `https://cdn.statically.io/gh/freebuisness/assets@main/zones.json`;
+  return `https://${mirror}${CDN_TEST_PATH}`;
+}
+
+function _swapMirror(url, mirror) {
+  if (!url) return url;
+  // Replace any jsdelivr host OR statically host with the chosen mirror
+  if (mirror === 'cdn.statically.io') {
+    // Convert jsdelivr URL to statically format (same /gh/ path works)
+    return url.replace(/\/\/[a-z]+\.jsdelivr\.net/, '//cdn.statically.io')
+              .replace(/\/\/cdn\.statically\.io/, '//cdn.statically.io');
+  }
+  // Replace any CDN host (jsdelivr or statically) with the chosen jsdelivr mirror
+  return url.replace(/\/\/[a-z]+\.jsdelivr\.net/, '//' + mirror)
+            .replace(/\/\/cdn\.statically\.io/, '//' + mirror);
 }
 
 async function _pingMirror(mirror) {
   const t0 = Date.now();
   try {
-    const r = await fetch(`https://${mirror}${CDN_TEST_PATH}`, {
+    const r = await fetch(_mirrorTestUrl(mirror), {
       method: 'HEAD', cache: 'no-store',
       signal: AbortSignal.timeout(5000)
     });
@@ -1116,7 +1138,7 @@ async function resolveCdn() {
   if (_cdnResolving) return _cdnResolving;
   _cdnResolving = (async () => {
     // Ping all mirrors in parallel, pick fastest that responds
-    const results = await Promise.all(CDN_MIRRORS.map(_pingMirror));
+    const results = await Promise.all(CDN_MIRRORS_ALL.map(_pingMirror));
     const working = results.filter(r => r.ok).sort((a, b) => a.ms - b.ms);
     if (working.length) {
       _cdnHost = working[0].mirror;
@@ -1133,9 +1155,9 @@ async function resolveCdn() {
 // Patch global fetch to transparently swap any jsdelivr host with the fastest
 const _origFetch = window.fetch.bind(window);
 window.fetch = function(input, init) {
-  if (typeof input === 'string' && input.includes('jsdelivr.net')) {
+  if (typeof input === 'string' && (input.includes('jsdelivr.net') || input.includes('statically.io'))) {
     input = cdnUrl(input);
-  } else if (input instanceof Request && input.url.includes('jsdelivr.net')) {
+  } else if (input instanceof Request && (input.url.includes('jsdelivr.net') || input.url.includes('statically.io'))) {
     input = new Request(cdnUrl(input.url), input);
   }
   return _origFetch(input, init);
@@ -1154,6 +1176,9 @@ let GN_HTML  = "https://cdn.jsdelivr.net/gh/freebuisness/html@main";
 resolveCdn().then(mirror => {
   GN_COVER = `https://${mirror}/gh/freebuisness/covers@main`;
   GN_HTML  = `https://${mirror}/gh/freebuisness/html@main`;
+  // Re-run loadUGS now that CDN is resolved — if statically.io won, UGS URLs get swapped
+  loadUGS();
+  render();
 });
 const GN_ZONES = [
   "https://cdn.jsdelivr.net/gh/freebuisness/assets@main/zones.json",
@@ -3366,9 +3391,18 @@ const UGS_GAMES = [
 ];
 
 function loadUGS() {
+  // Convert a jsdelivr URL to statically.io format
+  function toStatically(u) {
+    // jsdelivr: https://cdn.jsdelivr.net/gh/User/Repo@tag/file
+    // statically: https://cdn.statically.io/gh/User/Repo@tag/file
+    return u.replace(/\/\/[a-z]+\.jsdelivr\.net/, '//cdn.statically.io');
+  }
+  const useStatically = _cdnResolved && _cdnHost === 'cdn.statically.io';
   ugsGames = UGS_GAMES.map(g => ({
     _src:'ugs', _key:'ugs_'+g.k, _id:'ugs_'+g.k,
-    name:g.n, cover:g.c, url:g.u, tags:[], featured:false,
+    name:g.n, cover:g.c,
+    url: useStatically ? toStatically(g.u) : g.u,
+    tags:[], featured:false,
   }));
   ugsGames.sort((a,b)=>a.name.localeCompare(b.name));
 }
@@ -3711,23 +3745,11 @@ async function launch(key) {
   }
 
 
-  // Fetch and write into iframe — tries all jsdelivr mirrors if one returns a size error
+  // Fetch and write into iframe
   try{
-    const jsMirrors = ['cdn.jsdelivr.net','fastly.jsdelivr.net','gcore.jsdelivr.net','quantil.jsdelivr.net','testingcf.jsdelivr.net'];
-    let rawHtml = null;
-    for (const mirror of jsMirrors) {
-      try {
-        const url = g.url.replace(/([a-z]+\.jsdelivr\.net)/, mirror) + '?t=' + Date.now();
-        const res = await fetch(url);
-        if (!res.ok) continue;
-        const text = await res.text();
-        // jsdelivr returns a readable error page for oversized packages — detect and skip
-        if (text.includes('Package size exceeded') || text.includes('package size exceeded') || text.length < 50) continue;
-        rawHtml = text;
-        break;
-      } catch(e) { continue; }
-    }
-    if (!rawHtml) throw new Error('All jsdelivr mirrors failed or returned size error');
+    const res=await fetch(g.url+'?t='+Date.now());
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const rawHtml=await res.text();
     const gameHtml=patchHtml(rawHtml);
     activeGame.gnHtml=gameHtml;
     const baseUrl=g.url.replace(/\/[^\/]*$/,'/');
