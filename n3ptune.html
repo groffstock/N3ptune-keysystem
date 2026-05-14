@@ -653,6 +653,7 @@ body{
   // ── Keys: hardcoded test key + GitHub-backed keys ──
   const REPO = 'groffstock/N3ptune-keysystem';
   const HARDCODED = {};
+  const _keyFetch = window.fetch.bind(window); // save before main script patches fetch
 
   let rateLocked = false;
   let timerInterval = null;
@@ -707,17 +708,12 @@ body{
   async function fetchGitHubKeys() {
     try {
       const mirrors = ['cdn.jsdelivr.net','fastly.jsdelivr.net','gcore.jsdelivr.net','quantil.jsdelivr.net','testingcf.jsdelivr.net'];
-      // Ping all in parallel, use fastest responding
-      const results = await Promise.all(mirrors.map(async m => {
-        const t0 = Date.now();
+      for (const m of mirrors) {
         try {
-          const r = await fetch(`https://${m}/gh/${REPO}@main/keys.json?t=${Date.now()}`, { signal: AbortSignal.timeout(5000) });
-          if (r.ok) return { m, ms: Date.now()-t0, data: await r.json() };
+          const r = await _keyFetch(`https://${m}/gh/${REPO}@main/keys.json?t=${Date.now()}`, { signal: AbortSignal.timeout(5000) });
+          if (r.ok) return await r.json();
         } catch(e) {}
-        return null;
-      }));
-      const best = results.filter(Boolean).sort((a,b) => a.ms-b.ms)[0];
-      if (best) return best.data;
+      }
       return null; // all mirrors failed, don't log out
     } catch(e) { return null; }
   }
