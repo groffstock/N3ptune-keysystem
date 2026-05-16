@@ -1000,6 +1000,22 @@ body{
         </div>
       </div>
 
+      <!-- CDN -->
+      <div class="s-section">
+        <div class="s-section-title">CDN</div>
+        <div class="s-row">
+          <div>
+            <div class="s-label">Mirror</div>
+            <div class="s-desc">Choose which jsdelivr mirror to use for loading games</div>
+          </div>
+          <div style="display:flex;gap:6px;flex:1;max-width:280px">
+            <select class="s-input" id="cdnSelect" onchange="setCdnManual(this.value)" style="flex:1"></select>
+            <button class="s-btn" onclick="testAllCdns()">Test</button>
+          </div>
+        </div>
+        <div id="cdnTestResults" style="margin-top:10px;font-size:11px;color:var(--muted);line-height:1.9"></div>
+      </div>
+
       <!-- N3PT PANIC -->
       <div class="s-section">
         <div class="s-section-title">N3ptPanic</div>
@@ -1125,8 +1141,32 @@ async function resolveCdn() {
   if (_cdnResolved) return _cdnHost;
   if (_cdnResolving) return _cdnResolving;
   _cdnResolving = (async () => {
-    // Ping all mirrors in parallel, pick fastest that responds
-    const results = await Promise.all(CDN_MIRRORS_ALL.map(_pingMirror));
+    // Check if user manually picked a CDN
+    const saved = localStorage.getItem('n3_cdn');
+    if (saved && CDN_MIRRORS_ALL.includes(saved)) {
+      _cdnHost = saved;
+      _cdnResolved = true;
+      console.log('[N3ptune] CDN (manual):', saved);
+      return _cdnHost;
+    }
+    // Ping all mirrors in parallel — test both availability AND a real file fetch
+    const results = await Promise.all(CDN_MIRRORS_ALL.map(async mirror => {
+      const t0 = Date.now();
+      try {
+        // Use a small known file to test actual content delivery, not just ping
+        const testUrl = `https://${mirror}/gh/freebuisness/assets@main/zones.json`;
+        const r = await fetch(testUrl, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+        if (r.ok) {
+          const text = await r.text();
+          if (text && text.length > 10) {
+            return { mirror, ms: Date.now() - t0, ok: true };
+          }
+        }
+        return { mirror, ok: false };
+      } catch(e) {
+        return { mirror, ok: false };
+      }
+    }));
     const working = results.filter(r => r.ok).sort((a, b) => a.ms - b.ms);
     if (working.length) {
       _cdnHost = working[0].mirror;
@@ -1138,6 +1178,59 @@ async function resolveCdn() {
     return _cdnHost;
   })();
   return _cdnResolving;
+}
+
+// Manual CDN override from settings
+function setCdnManual(mirror) {
+  if (!mirror) return;
+  localStorage.setItem('n3_cdn', mirror);
+  _cdnHost = mirror;
+  _cdnResolved = true;
+  _cdnResolving = null;
+  // Reload GN and UGS with new CDN
+  GN_COVER = `https://${mirror}/gh/freebuisness/covers@main`;
+  GN_HTML  = `https://${mirror}/gh/freebuisness/html@main`;
+  loadUGS();
+  loadGN().then(() => { render(); renderHome(); });
+  showN3Toast('CDN set to ' + mirror);
+}
+
+async function testAllCdns() {
+  const resultsEl = document.getElementById('cdnTestResults');
+  if (!resultsEl) return;
+  resultsEl.textContent = 'Testing all mirrors...';
+  const results = await Promise.all(CDN_MIRRORS_ALL.map(async mirror => {
+    const t0 = Date.now();
+    try {
+      const r = await fetch(`https://${mirror}/gh/freebuisness/assets@main/zones.json`, {
+        cache: 'no-store', signal: AbortSignal.timeout(6000)
+      });
+      if (r.ok) {
+        const text = await r.text();
+        if (text && text.length > 10) return { mirror, ms: Date.now()-t0, ok: true };
+      }
+      return { mirror, ok: false };
+    } catch(e) { return { mirror, ok: false }; }
+  }));
+  results.sort((a,b) => {
+    if (a.ok && !b.ok) return -1;
+    if (!a.ok && b.ok) return 1;
+    return a.ms - b.ms;
+  });
+  resultsEl.innerHTML = results.map(r => {
+    const active = r.mirror === _cdnHost ? ' <strong style="color:var(--accent2)">(active)</strong>' : '';
+    return r.ok
+      ? `<span style="color:#4ade80">✓</span> <a href="#" onclick="setCdnManual('${r.mirror}');buildCdnSelect();return false;" style="color:var(--text)">${r.mirror}</a> — ${r.ms}ms${active}`
+      : `<span style="color:#f87171">✗</span> <span style="color:var(--muted)">${r.mirror} — blocked</span>`;
+  }).join('<br>');
+}
+
+function buildCdnSelect() {
+  const sel = document.getElementById('cdnSelect');
+  if (!sel) return;
+  sel.innerHTML = CDN_MIRRORS_ALL.map(m =>
+    `<option value="${m}"${m === _cdnHost ? ' selected' : ''}>${m}</option>`
+  ).join('');
 }
 
 // Patch global fetch to transparently swap any jsdelivr host with the fastest
@@ -3723,23 +3816,46 @@ async function launch(key) {
     window.open(g.url,'_blank'); closeGame(); return;
   }
 
+  // Fetch and write into iframe — with CDN mirror fallback and content validation
+  async function tryFetch(url) {
+    const mirrors = CDN_MIRRORS_ALL;
+    for (const mirror of mirrors) {
+      try {
+        const u = _swapMirror(url, mirror) + '?t=' + Date.now();
+        const res = await fetch(u, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) continue;
+        const text = await res.text();
+        // Validate we got real HTML content, not an error page
+        if (text.length < 100) continue;
+        if (text.includes('Package size exceeded') || text.includes('package size exceeded')) continue;
+        if (!text.includes('<') ) continue;
+        return { text, mirror };
+      } catch(e) { continue; }
+    }
+    return null;
+  }
 
-  // Fetch and write into iframe
   try{
-    const res=await fetch(g.url+'?t='+Date.now());
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    const rawHtml=await res.text();
-    const gameHtml=patchHtml(rawHtml);
-    activeGame.gnHtml=gameHtml;
-    const baseUrl=g.url.replace(/\/[^\/]*$/,'/');
-    const injected=gameHtml.replace(/(<head[^>]*>)/i,`$1<base href="${baseUrl}">`);
+    const result = await tryFetch(g.url);
+    if (!result) throw new Error('All mirrors failed');
+    const rawHtml = result.text;
+    const gameHtml = patchHtml(rawHtml);
+    activeGame.gnHtml = gameHtml;
+    const baseUrl = _swapMirror(g.url, result.mirror).replace(/\/[^\/]*$/, '/');
+    // Ensure there's a <head> tag to inject into
+    let injected = gameHtml;
+    if (!/<head/i.test(injected)) {
+      injected = '<html><head></head><body>' + injected + '</body></html>';
+    }
+    injected = injected.replace(/(<head[^>]*>)/i, `$1<base href="${baseUrl}">`);
     frame.contentDocument.open();
     frame.contentDocument.write(injected);
     frame.contentDocument.close();
     setTimeout(()=>document.getElementById('pload').classList.add('gone'),700);
   }catch(e){
+    // Final fallback: set src directly
     frame.onload=()=>setTimeout(()=>document.getElementById('pload').classList.add('gone'),700);
-    frame.src=g.url;
+    frame.src = _swapMirror(g.url, _cdnHost);
   }
 }
 
@@ -3904,7 +4020,7 @@ function showPage(name) {
     topbar.style.display='flex';
     if(pt) pt.textContent = 'Settings';
   }
-  if(name==='settings'){ buildThemeGrid(); loadCloakInputs(); loadWallpaperPreview(); }
+  if(name==='settings'){ buildThemeGrid(); loadCloakInputs(); loadWallpaperPreview(); buildCdnSelect(); }
   render();
 }
 
