@@ -707,13 +707,10 @@ body{
 
   async function fetchGitHubKeys() {
     try {
-      const mirrors = ['cdn.jsdelivr.net','fastly.jsdelivr.net','gcore.jsdelivr.net','quantil.jsdelivr.net','testingcf.jsdelivr.net','cdn.statically.io'];
+      const mirrors = ['cdn.jsdelivr.net','fastly.jsdelivr.net','gcore.jsdelivr.net','quantil.jsdelivr.net','testingcf.jsdelivr.net','originfastly.jsdelivr.net'];
       for (const m of mirrors) {
         try {
-          const base = m === 'cdn.statically.io'
-            ? `https://cdn.statically.io/gh/${REPO}@main/keys.json`
-            : `https://${m}/gh/${REPO}@main/keys.json`;
-          const r = await _keyFetch(base + '?t=' + Date.now(), { signal: AbortSignal.timeout(5000) });
+          const r = await _keyFetch(`https://${m}/gh/${REPO}@main/keys.json?t=${Date.now()}`, { signal: AbortSignal.timeout(5000) });
           if (r.ok) return await r.json();
         } catch(e) {}
       }
@@ -1079,8 +1076,9 @@ const CDN_MIRRORS = [
   'gcore.jsdelivr.net',
   'quantil.jsdelivr.net',
   'testingcf.jsdelivr.net',
+  'originfastly.jsdelivr.net',
 ];
-const CDN_MIRRORS_ALL = [...CDN_MIRRORS, 'cdn.statically.io'];
+const CDN_MIRRORS_ALL = [...CDN_MIRRORS];
 const CDN_TEST_PATH = '/gh/freebuisness/assets@main/zones.json';
 const ALL_CDN_HOSTS = /(\/\/)([a-z]+\.jsdelivr\.net)/g;
 
@@ -1094,27 +1092,17 @@ function cdnUrl(url) {
 }
 
 function patchHtml(html) {
-  // Replace all CDN hosts (jsdelivr or statically) in game HTML with the fastest
+  // Replace all jsdelivr hosts in game HTML with the fastest mirror
   return _swapMirror(html, _cdnHost);
 }
 
 function _mirrorTestUrl(mirror) {
-  if (mirror === 'cdn.statically.io')
-    return `https://cdn.statically.io/gh/freebuisness/assets@main/zones.json`;
   return `https://${mirror}${CDN_TEST_PATH}`;
 }
 
 function _swapMirror(url, mirror) {
   if (!url) return url;
-  // Replace any jsdelivr host OR statically host with the chosen mirror
-  if (mirror === 'cdn.statically.io') {
-    // Convert jsdelivr URL to statically format (same /gh/ path works)
-    return url.replace(/\/\/[a-z]+\.jsdelivr\.net/, '//cdn.statically.io')
-              .replace(/\/\/cdn\.statically\.io/, '//cdn.statically.io');
-  }
-  // Replace any CDN host (jsdelivr or statically) with the chosen jsdelivr mirror
-  return url.replace(/\/\/[a-z]+\.jsdelivr\.net/, '//' + mirror)
-            .replace(/\/\/cdn\.statically\.io/, '//' + mirror);
+  return url.replace(/\/\/[a-z]+\.jsdelivr\.net/, '//' + mirror);
 }
 
 async function _pingMirror(mirror) {
@@ -1155,9 +1143,9 @@ async function resolveCdn() {
 // Patch global fetch to transparently swap any jsdelivr host with the fastest
 const _origFetch = window.fetch.bind(window);
 window.fetch = function(input, init) {
-  if (typeof input === 'string' && (input.includes('jsdelivr.net') || input.includes('statically.io'))) {
+  if (typeof input === 'string' && input.includes('jsdelivr.net')) {
     input = cdnUrl(input);
-  } else if (input instanceof Request && (input.url.includes('jsdelivr.net') || input.url.includes('statically.io'))) {
+  } else if (input instanceof Request && input.url.includes('jsdelivr.net')) {
     input = new Request(cdnUrl(input.url), input);
   }
   return _origFetch(input, init);
@@ -1176,7 +1164,7 @@ let GN_HTML  = "https://cdn.jsdelivr.net/gh/freebuisness/html@main";
 resolveCdn().then(mirror => {
   GN_COVER = `https://${mirror}/gh/freebuisness/covers@main`;
   GN_HTML  = `https://${mirror}/gh/freebuisness/html@main`;
-  // Re-run loadUGS now that CDN is resolved — if statically.io won, UGS URLs get swapped
+  // Re-run loadUGS now that CDN is resolved
   loadUGS();
   render();
 });
@@ -3391,18 +3379,9 @@ const UGS_GAMES = [
 ];
 
 function loadUGS() {
-  // Convert a jsdelivr URL to statically.io format
-  function toStatically(u) {
-    // jsdelivr: https://cdn.jsdelivr.net/gh/User/Repo@tag/file
-    // statically: https://cdn.statically.io/gh/User/Repo@tag/file
-    return u.replace(/\/\/[a-z]+\.jsdelivr\.net/, '//cdn.statically.io');
-  }
-  const useStatically = _cdnResolved && _cdnHost === 'cdn.statically.io';
   ugsGames = UGS_GAMES.map(g => ({
     _src:'ugs', _key:'ugs_'+g.k, _id:'ugs_'+g.k,
-    name:g.n, cover:g.c,
-    url: useStatically ? toStatically(g.u) : g.u,
-    tags:[], featured:false,
+    name:g.n, cover:g.c, url:g.u, tags:[], featured:false,
   }));
   ugsGames.sort((a,b)=>a.name.localeCompare(b.name));
 }
