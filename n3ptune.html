@@ -1073,6 +1073,7 @@ body{
       <div class="spinner"></div>
       <div class="ltxt" id="ltxt">Loading...</div>
       <div class="lsrc" id="lsrc"></div>
+      <button id="showAnywayBtn" onclick="showGameAnyway()" style="display:none;margin-top:14px;padding:8px 18px;background:rgba(37,99,235,0.18);border:1px solid rgba(37,99,235,0.35);color:var(--accent2);border-radius:8px;font-family:'Syne',sans-serif;font-size:11.5px;font-weight:700;cursor:pointer;letter-spacing:.04em;">Show Game Anyway</button>
     </div>
     <iframe id="gframe" allow="fullscreen;autoplay;pointer-lock;clipboard-write" allowfullscreen></iframe>
   </div>
@@ -3788,6 +3789,13 @@ async function launch(key) {
   document.getElementById('lsrc').textContent=g._src==='gn'?'GN-Math':g._src==='seraph'?'Seraph':'UGS';
   document.getElementById('lsrc').className='lsrc '+g._src;
   document.getElementById('ltxt').textContent='Loading '+g.name+'...';
+  document.getElementById('showAnywayBtn').style.display='none';
+  clearTimeout(window._showAnywayTimer);
+  window._showAnywayTimer = setTimeout(() => {
+    const btn = document.getElementById('showAnywayBtn');
+    const pload = document.getElementById('pload');
+    if (btn && pload && !pload.classList.contains('gone')) btn.style.display='';
+  }, 5000);
   document.getElementById('player').classList.add('open');
   const tip = document.getElementById('ptip');
   if (tip) tip.style.display = '';
@@ -3851,12 +3859,22 @@ async function launch(key) {
     frame.contentDocument.open();
     frame.contentDocument.write(injected);
     frame.contentDocument.close();
-    setTimeout(()=>document.getElementById('pload').classList.add('gone'),700);
+    setTimeout(()=>{
+      document.getElementById('pload').classList.add('gone');
+      document.getElementById('showAnywayBtn').style.display='none';
+      clearTimeout(window._showAnywayTimer);
+    },700);
   }catch(e){
     // Final fallback: set src directly
     frame.onload=()=>setTimeout(()=>document.getElementById('pload').classList.add('gone'),700);
     frame.src = _swapMirror(g.url, _cdnHost);
   }
+}
+
+function showGameAnyway() {
+  document.getElementById('pload').classList.add('gone');
+  document.getElementById('showAnywayBtn').style.display='none';
+  clearTimeout(window._showAnywayTimer);
 }
 
 function closeGame(){
