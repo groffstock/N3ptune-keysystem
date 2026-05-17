@@ -643,7 +643,7 @@ body{
     </div>
 
     <div style="margin-top:22px;padding-top:18px;border-top:1px solid rgba(96,165,250,0.07);font-size:10px;color:#3d5a7a;font-weight:600;letter-spacing:.08em">
-      NO KEY? CONTACT THE OWNER
+      NO KEY? CONTACT THE SIGMA ALPHA OWNER
     </div>
   </div>
 </div>
@@ -707,10 +707,14 @@ body{
 
   async function fetchGitHubKeys() {
     try {
-      const mirrors = ['cdn.jsdelivr.net','fastly.jsdelivr.net','gcore.jsdelivr.net','quantil.jsdelivr.net','testingcf.jsdelivr.net','originfastly.jsdelivr.net'];
+      const mirrors = ['cdn.jsdelivr.net','fastly.jsdelivr.net','gcore.jsdelivr.net','quantil.jsdelivr.net','testingcf.jsdelivr.net','originfastly.jsdelivr.net','cdn.staticdelivr.com'];
       for (const m of mirrors) {
         try {
-          const r = await _keyFetch(`https://${m}/gh/${REPO}@main/keys.json?t=${Date.now()}`, { signal: AbortSignal.timeout(5000) });
+          // staticdelivr uses /branch/ instead of @branch
+          const kPath = m === 'cdn.staticdelivr.com'
+            ? `https://${m}/gh/${REPO}/main/keys.json`
+            : `https://${m}/gh/${REPO}@main/keys.json`;
+          const r = await _keyFetch(kPath + '?t=' + Date.now(), { signal: AbortSignal.timeout(5000) });
           if (r.ok) return await r.json();
         } catch(e) {}
       }
@@ -942,6 +946,22 @@ body{
       <div class="settings-title">Settings</div>
       <div class="settings-sub">Customize your N3ptune experience</div>
 
+      <!-- CDN -->
+      <div class="s-section">
+        <div class="s-section-title">CDN</div>
+        <div class="s-row">
+          <div>
+            <div class="s-label">Mirror</div>
+            <div class="s-desc">Choose which jsdelivr mirror to use for loading games</div>
+          </div>
+          <div style="display:flex;gap:6px;flex:1;max-width:280px">
+            <select class="s-input" id="cdnSelect" onchange="setCdnManual(this.value)" style="flex:1"></select>
+            <button class="s-btn" onclick="testAllCdns()">Test</button>
+          </div>
+        </div>
+        <div id="cdnTestResults" style="margin-top:10px;font-size:11px;color:var(--muted);line-height:1.9"></div>
+      </div>
+
       <!-- THEME -->
       <div class="s-section">
         <div class="s-section-title">Theme</div>
@@ -998,22 +1018,6 @@ body{
         <div style="margin-top:10px">
           <button class="s-btn ghost" onclick="resetCloak()">Reset to Default</button>
         </div>
-      </div>
-
-      <!-- CDN -->
-      <div class="s-section">
-        <div class="s-section-title">CDN</div>
-        <div class="s-row">
-          <div>
-            <div class="s-label">Mirror</div>
-            <div class="s-desc">Choose which jsdelivr mirror to use for loading games</div>
-          </div>
-          <div style="display:flex;gap:6px;flex:1;max-width:280px">
-            <select class="s-input" id="cdnSelect" onchange="setCdnManual(this.value)" style="flex:1"></select>
-            <button class="s-btn" onclick="testAllCdns()">Test</button>
-          </div>
-        </div>
-        <div id="cdnTestResults" style="margin-top:10px;font-size:11px;color:var(--muted);line-height:1.9"></div>
       </div>
 
       <!-- N3PT PANIC -->
@@ -1095,7 +1099,7 @@ const CDN_MIRRORS = [
   'testingcf.jsdelivr.net',
   'originfastly.jsdelivr.net',
 ];
-const CDN_MIRRORS_ALL = [...CDN_MIRRORS];
+const CDN_MIRRORS_ALL = [...CDN_MIRRORS, 'cdn.staticdelivr.com'];
 const CDN_TEST_PATH = '/gh/freebuisness/assets@main/zones.json';
 const ALL_CDN_HOSTS = /(\/\/)([a-z]+\.jsdelivr\.net)/g;
 
@@ -1119,7 +1123,15 @@ function _mirrorTestUrl(mirror) {
 
 function _swapMirror(url, mirror) {
   if (!url) return url;
-  return url.replace(/\/\/[a-z]+\.jsdelivr\.net/, '//' + mirror);
+  if (mirror === 'cdn.staticdelivr.com') {
+    // staticdelivr uses /gh/user/repo/branch/file (@ replaced with /)
+    return url
+      .replace(/\/\/[a-z.]+(?:jsdelivr\.net|staticdelivr\.com)/, '//cdn.staticdelivr.com')
+      .replace(/(\/gh\/[^/]+\/[^@]+)@/, '$1/');
+  }
+  return url
+    .replace(/\/\/[a-z.]+(?:jsdelivr\.net|staticdelivr\.com)/, '//' + mirror)
+    .replace(/(\/gh\/[^/]+\/[^/]+)\/([^/])/, '$1@$2'); // restore @ if coming from staticdelivr
 }
 
 async function _pingMirror(mirror) {
@@ -1290,41 +1302,28 @@ async function loadAll() {
 }
 
 async function loadGN() {
-  // Try to get the latest SHA from GitHub API for freshest zones.json
-  let zonesURL = GN_ZONES[Math.floor(Math.random() * GN_ZONES.length)];
-  try {
-    let shaResponse = await fetch("https://api.github.com/repos/freebuisness/assets/commits?t=" + Date.now());
-    if (shaResponse && shaResponse.status === 200) {
-      try {
-        const shaJson = await shaResponse.json();
-        const sha = shaJson[0]['sha'];
-        if (sha) zonesURL = `https://${_cdnHost}/gh/freebuisness/assets@${sha}/zones.json`;
-      } catch(e) {
-        try {
-          const fallbackSha = await fetch("https://raw.githubusercontent.com/freebuisness/xml/refs/heads/main/sha.txt?t=" + Date.now());
-          if (fallbackSha && fallbackSha.status === 200) {
-            const sha = (await fallbackSha.text()).trim();
-            if (sha) zonesURL = `https://${_cdnHost}/gh/freebuisness/assets@${sha}/zones.json`;
-          }
-        } catch(e2) {}
-      }
-    }
-  } catch(e) {}
+  // Build zones.json URLs for every CDN mirror so we always find one that works
+  const zonesPath = '/gh/freebuisness/assets@main/zones.json';
+  const allZonesUrls = CDN_MIRRORS_ALL.map(m => `https://${m}${zonesPath}`);
+  // Put the active CDN first
+  allZonesUrls.sort((a, b) => a.includes(_cdnHost) ? -1 : 1);
 
-  // Fetch zones.json, fall back through static URLs if needed
   let fetched = false;
-  const urlsToTry = [zonesURL, ...GN_ZONES.filter(u => u !== zonesURL)];
-  for (const u of urlsToTry) {
+  for (const u of allZonesUrls) {
     try {
-      const r = await fetch(u + (u.includes('?') ? '&' : '?') + 't=' + Date.now());
-      if (r.ok) {
-        const data = await r.json();
-        gnZones = Array.isArray(data) ? data : (data.zones || data.games || Object.values(data)[0] || []);
-        if (gnZones.length) { fetched = true; break; }
+      const r = await fetch(u + '?t=' + Date.now(), { signal: AbortSignal.timeout(6000) });
+      if (!r.ok) continue;
+      const data = await r.json();
+      const zones = Array.isArray(data) ? data : (data.zones || data.games || Object.values(data)[0] || []);
+      if (zones.length) {
+        gnZones = zones;
+        fetched = true;
+        console.log('[N3ptune] GN-Math zones loaded from:', u);
+        break;
       }
     } catch(e) { console.warn('[N3ptune] GN-Math fetch failed:', u, e.message); }
   }
-  if (!fetched) console.warn('[N3ptune] GN-Math: all URLs failed, gnZones is empty');
+  if (!fetched) console.warn('[N3ptune] GN-Math: all CDN mirrors failed for zones.json');
 
   // Load popularity stats (non-blocking)
   ['year','month','week','day'].forEach(async p => {
