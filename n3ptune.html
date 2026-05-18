@@ -105,14 +105,24 @@ body{
 .tsort option{background:var(--panel)}
 
 /* ═══ PAGES ═══ */
-.page{display:none;position:absolute;top:0;left:0;right:0;bottom:0;flex-direction:column}
-.page.active{display:flex}
+.page {
+  display: none;       /* Crucial: Completely hides inactive page elements so they can't block clicks */
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  flex-direction: column;
+}
+.page.active {
+  display: flex;       /* Only renders the page currently selected */
+}
 
 /* ── HOME PAGE ── */
 .home-page {
-  position: absolute; /* Force it to map precisely to the page boundaries */
-  inset: 0;
-  overflow-y: auto; /* Change to auto so scrollbars only appear when needed */
+  position: absolute;  /* Lock the container box strictly inside the browser frame */
+  inset: 0;            /* Sets top, left, right, and bottom to 0 simultaneously */
+  overflow-y: auto;    /* Activates internal scrolling only when content overflows */
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y;
   overscroll-behavior: contain;
