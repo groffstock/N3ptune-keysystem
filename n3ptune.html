@@ -109,14 +109,13 @@ body{
 .page.active{display:flex}
 
 /* ── HOME PAGE ── */
-.home-page{overflow-y:scroll;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain;height:100%}
-.home-sections{padding:0 28px 60px}
-.home-hero{
-  padding:52px 40px 36px;
-  text-align:center;
-  position:relative;
-  overflow:hidden;
-  flex-shrink:0;
+.home-page {
+  position: absolute; /* Force it to map precisely to the page boundaries */
+  inset: 0;
+  overflow-y: auto; /* Change to auto so scrollbars only appear when needed */
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
 }
 /* Radial glow behind title */
 .home-hero::before{
@@ -323,11 +322,11 @@ body{
 /* ── GAMES PAGE ── */
 .games-page{overflow:hidden}
 .games-topbar{flex-shrink:0}
-.games-content{padding:16px 22px 48px;flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;min-height:0;touch-action:pan-y;overscroll-behavior:contain}
+.games-content{padding:16px 22px 48px;flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;min-height:0;overscroll-behavior:contain}
 
 /* ── SETTINGS PAGE ── */
 .settings-page{
-  padding:0;overflow-y:scroll;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain;
+  padding:0;overflow-y:scroll;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;
   align-items:stretch;
 }
 .settings-wrap{max-width:640px;margin:0 auto;padding:36px 28px 60px;width:100%}
@@ -572,7 +571,6 @@ body{
   display:flex;align-items:center;justify-content:center;
   font-family:'Syne',sans-serif;
   overscroll-behavior:contain;
-  touch-action:pan-y;
 ">
   <!-- radial glow -->
   <div style="position:absolute;inset:0;background:radial-gradient(ellipse 70% 60% at 50% 50%,rgba(37,99,235,0.12) 0%,transparent 70%);pointer-events:none"></div>
