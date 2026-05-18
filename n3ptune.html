@@ -1150,6 +1150,9 @@ async function _pingMirror(mirror) {
   }
 }
 
+// Cached zones.json text from the fastest mirror — reused by loadGN() so we don't fetch twice
+let _cdnZonesText = null;
+
 async function resolveCdn() {
   if (_cdnResolved) return _cdnHost;
   if (_cdnResolving) return _cdnResolving;
@@ -1163,16 +1166,16 @@ async function resolveCdn() {
       return _cdnHost;
     }
     // Ping all mirrors in parallel — test both availability AND a real file fetch
+    // IMPORTANT: save the response body so loadGN() can reuse it without a second fetch
     const results = await Promise.all(CDN_MIRRORS_ALL.map(async mirror => {
       const t0 = Date.now();
       try {
-        // Use a small known file to test actual content delivery, not just ping
         const testUrl = `https://${mirror}/gh/freebuisness/assets@main/zones.json`;
-        const r = await fetch(testUrl, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+        const r = await _origFetch(testUrl, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
         if (r.ok) {
           const text = await r.text();
           if (text && text.length > 10) {
-            return { mirror, ms: Date.now() - t0, ok: true };
+            return { mirror, ms: Date.now() - t0, ok: true, text };
           }
         }
         return { mirror, ok: false };
@@ -1183,6 +1186,8 @@ async function resolveCdn() {
     const working = results.filter(r => r.ok).sort((a, b) => a.ms - b.ms);
     if (working.length) {
       _cdnHost = working[0].mirror;
+      // Cache the zones.json text from the fastest mirror so loadGN() doesn't re-fetch
+      _cdnZonesText = working[0].text;
       console.log('[N3ptune] CDN ranking:', working.map(r => `${r.mirror} ${r.ms}ms`).join(', '));
     } else {
       console.warn('[N3ptune] All CDN mirrors failed, using default');
@@ -1266,14 +1271,6 @@ const _IC_PLAY    = '<svg width="9" height="9" viewBox="0 0 24 24" fill="current
 
 let GN_COVER = "https://cdn.jsdelivr.net/gh/freebuisness/covers@main";
 let GN_HTML  = "https://cdn.jsdelivr.net/gh/freebuisness/html@main";
-// Update GN_COVER/GN_HTML once the CDN mirror is resolved
-resolveCdn().then(mirror => {
-  GN_COVER = `https://${mirror}/gh/freebuisness/covers@main`;
-  GN_HTML  = `https://${mirror}/gh/freebuisness/html@main`;
-  // Re-run loadUGS now that CDN is resolved
-  loadUGS();
-  render();
-});
 const GN_ZONES = [
   "https://cdn.jsdelivr.net/gh/freebuisness/assets@main/zones.json",
   "https://cdn.jsdelivr.net/gh/freebuisness/assets@latest/zones.json",
@@ -1295,40 +1292,87 @@ async function loadAll() {
   buildSidebar();
   renderHome();
   render();
-  // Load GN-Math in background, re-render when done
-  loadGN().then(()=>{
-    buildSidebar(); render(); renderHome();
-  }).catch(()=>{});
+  // Wait for CDN resolution first, THEN load GN-Math — eliminates the race condition
+  // where loadGN() ran with a stale _cdnHost before resolveCdn() finished
+  resolveCdn().then(() => {
+    GN_COVER = `https://${_cdnHost}/gh/freebuisness/covers@main`;
+    GN_HTML  = `https://${_cdnHost}/gh/freebuisness/html@main`;
+    loadUGS(); // re-apply CDN to UGS URLs too
+    loadGN().then(() => {
+      buildSidebar(); render(); renderHome();
+    }).catch(() => {});
+  });
 }
 
+// Guard against concurrent loadGN() calls (race condition fix)
+let _loadGNPromise = null;
+
 async function loadGN() {
-  // Build zones.json URLs for every CDN mirror so we always find one that works
+  if (_loadGNPromise) return _loadGNPromise;
+  _loadGNPromise = _doLoadGN().finally(() => { _loadGNPromise = null; });
+  return _loadGNPromise;
+}
+
+async function _doLoadGN() {
   const zonesPath = '/gh/freebuisness/assets@main/zones.json';
-  const allZonesUrls = CDN_MIRRORS_ALL.map(m => `https://${m}${zonesPath}`);
-  // Put the active CDN first
-  allZonesUrls.sort((a, b) => a.includes(_cdnHost) ? -1 : 1);
 
-  let fetched = false;
-  for (const u of allZonesUrls) {
+  function parseZones(text) {
     try {
-      const r = await fetch(u + '?t=' + Date.now(), { signal: AbortSignal.timeout(6000) });
-      if (!r.ok) continue;
-      const data = await r.json();
+      const data = JSON.parse(text);
       const zones = Array.isArray(data) ? data : (data.zones || data.games || Object.values(data)[0] || []);
-      if (zones.length) {
-        gnZones = zones;
-        fetched = true;
-        console.log('[N3ptune] GN-Math zones loaded from:', u);
-        break;
-      }
-    } catch(e) { console.warn('[N3ptune] GN-Math fetch failed:', u, e.message); }
+      return zones.length ? zones : null;
+    } catch(e) { return null; }
   }
-  if (!fetched) console.warn('[N3ptune] GN-Math: all CDN mirrors failed for zones.json');
 
-  // Load popularity stats (non-blocking)
+  // 1) Reuse the zones.json body already fetched by resolveCdn() — zero extra network cost
+  if (_cdnZonesText) {
+    const zones = parseZones(_cdnZonesText);
+    if (zones) {
+      gnZones = zones;
+      console.log('[N3ptune] GN-Math zones loaded from cached CDN response (' + zones.length + ' zones)');
+      // Update base URLs to use the resolved mirror
+      GN_COVER = `https://${_cdnHost}/gh/freebuisness/covers@main`;
+      GN_HTML  = `https://${_cdnHost}/gh/freebuisness/html@main`;
+      _startPopFetch();
+      return;
+    }
+  }
+
+  // 2) Race all mirrors in parallel — fastest successful response wins
+  let fetched = false;
+  try {
+    const text = await Promise.any(
+      CDN_MIRRORS_ALL.map(async m => {
+        const u = `https://${m}${zonesPath}?t=${Date.now()}`;
+        const r = await _origFetch(u, { signal: AbortSignal.timeout(8000) });
+        if (!r.ok) throw new Error('not ok');
+        const t = await r.text();
+        const zones = parseZones(t);
+        if (!zones) throw new Error('empty');
+        return { zones, mirror: m };
+      })
+    );
+    gnZones = text.zones;
+    GN_COVER = `https://${text.mirror}/gh/freebuisness/covers@main`;
+    GN_HTML  = `https://${text.mirror}/gh/freebuisness/html@main`;
+    fetched = true;
+    console.log('[N3ptune] GN-Math zones loaded from:', text.mirror, '(' + text.zones.length + ' zones)');
+  } catch(e) {
+    console.warn('[N3ptune] GN-Math: all CDN mirrors failed for zones.json', e);
+  }
+
+  if (fetched) {
+    _startPopFetch();
+  } else {
+    console.warn('[N3ptune] GN-Math: all CDN mirrors failed for zones.json');
+  }
+}
+
+// Load popularity stats (non-blocking, called after zones are loaded)
+function _startPopFetch() {
   ['year','month','week','day'].forEach(async p => {
     try {
-      const d = await fetch(`https://data.jsdelivr.com/v1/stats/packages/gh/freebuisness/html@main/files?period=${p}`).then(r => r.json());
+      const d = await _origFetch(`https://data.jsdelivr.com/v1/stats/packages/gh/freebuisness/html@main/files?period=${p}`).then(r => r.json());
       gnPop[p] = {};
       d.forEach(f => { const m = f.name.match(/\/(\d+)\.html$/); if(m) gnPop[p][+m[1]] = f.hits?.total ?? 0; });
     } catch(e) { gnPop[p] = {}; }
