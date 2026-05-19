@@ -123,9 +123,9 @@ body{
   position: absolute;  /* Lock the container box strictly inside the browser frame */
   inset: 0;            /* Sets top, left, right, and bottom to 0 simultaneously */
   overflow-y: auto;    /* Activates internal scrolling only when content overflows */
-  -webkit-overflow-scrolling: touch;
-  touch-action: pan-y;
-  overscroll-behavior: contain;
+  
+  
+  
 }
 /* Radial glow behind title */
 .home-hero::before{
@@ -332,11 +332,11 @@ body{
 /* ── GAMES PAGE ── */
 .games-page{overflow:hidden}
 .games-topbar{flex-shrink:0}
-.games-content{padding:16px 22px 48px;flex:1;overflow-y:scroll;-webkit-overflow-scrolling:touch;min-height:0;overscroll-behavior:contain}
+.games-content{padding:16px 22px 48px;flex:1;overflow-y:scroll;min-height:0;}
 
 /* ── SETTINGS PAGE ── */
 .settings-page{
-  padding:0;overflow-y:scroll;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;
+  padding:0;overflow-y:scroll;
   align-items:stretch;
 }
 .settings-wrap{max-width:640px;margin:0 auto;padding:36px 28px 60px;width:100%}
@@ -580,7 +580,7 @@ body{
   background-size:44px 44px;
   display:flex;align-items:center;justify-content:center;
   font-family:'Syne',sans-serif;
-  overscroll-behavior:contain;
+  
 ">
   <!-- radial glow -->
   <div style="position:absolute;inset:0;background:radial-gradient(ellipse 70% 60% at 50% 50%,rgba(37,99,235,0.12) 0%,transparent 70%);pointer-events:none"></div>
@@ -672,9 +672,7 @@ body{
   }
 
   // Fix: prevent overlay blocking touch scroll after unlock
-  document.getElementById('keyGate').addEventListener('touchmove', function(e){
-    if(e.target === this) e.preventDefault();
-  }, { passive: false });
+  
 
   // ── Silent jsDelivr cache purge on load ──
   (async function purgeCache(){
@@ -3902,7 +3900,7 @@ async function launch(key) {
     activeGame.gnHtml = gameHtml;
     const baseUrl = _swapMirror(g.url, result.mirror).replace(/\/[^\/]*$/, '/');
     // Ensure there's a <head> tag to inject into
-    let injected = gameHtml;
+let injected = gameHtml;
     if (!/<head/i.test(injected)) {
       injected = '<html><head></head><body>' + injected + '</body></html>';
     }
@@ -4467,5 +4465,117 @@ function loadWallpaperPreview() {
 })();
 
 </script>
+
+<script>
+(function(){
+  if (!('ontouchstart' in window)) return;
+
+  const targets = [
+    '.home-page',
+    '.games-content',
+    '.settings-page',
+    '.home-card-row',
+    '.feat-row'
+  ];
+
+  function setupMomentumScroll(el, axis='y'){
+    if(!el) return;
+
+    let touching = false;
+    let startPos = 0;
+    let startScroll = 0;
+    let lastPos = 0;
+    let velocity = 0;
+    let raf = null;
+    let lastTime = 0;
+
+    function stopMomentum(){
+      if(raf){
+        cancelAnimationFrame(raf);
+        raf = null;
+      }
+    }
+
+    function momentum(){
+      if(Math.abs(velocity) < 0.08){
+        velocity = 0;
+        raf = null;
+        return;
+      }
+
+      if(axis === 'y'){
+        el.scrollTop -= velocity;
+      } else {
+        el.scrollLeft -= velocity;
+      }
+
+      velocity *= 0.95;
+      raf = requestAnimationFrame(momentum);
+    }
+
+    el.addEventListener('touchstart', e => {
+      touching = true;
+      stopMomentum();
+
+      const t = e.touches[0];
+      startPos = axis === 'y' ? t.clientY : t.clientX;
+      lastPos = startPos;
+      startScroll = axis === 'y' ? el.scrollTop : el.scrollLeft;
+      lastTime = performance.now();
+    }, { passive: true });
+
+    el.addEventListener('touchmove', e => {
+      if(!touching) return;
+
+      const t = e.touches[0];
+      const pos = axis === 'y' ? t.clientY : t.clientX;
+
+      const delta = pos - startPos;
+
+      if(axis === 'y'){
+        el.scrollTop = startScroll - delta;
+      } else {
+        el.scrollLeft = startScroll - delta;
+      }
+
+      const now = performance.now();
+      const dt = now - lastTime || 1;
+
+      velocity = (pos - lastPos) / dt * 16;
+
+      lastPos = pos;
+      lastTime = now;
+    }, { passive: true });
+
+    function endTouch(){
+      if(!touching) return;
+      touching = false;
+
+      stopMomentum();
+      raf = requestAnimationFrame(momentum);
+    }
+
+    el.addEventListener('touchend', endTouch, { passive: true });
+    el.addEventListener('touchcancel', endTouch, { passive: true });
+  }
+
+  function init(){
+    document.querySelectorAll('.home-page,.games-content,.settings-page').forEach(el=>{
+      setupMomentumScroll(el, 'y');
+    });
+
+    document.querySelectorAll('.home-card-row,.feat-row').forEach(el=>{
+      setupMomentumScroll(el, 'x');
+    });
+  }
+
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+
 </body>
 </html>
